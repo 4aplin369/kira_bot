@@ -74,6 +74,9 @@ DUE_DATE = _parse_date(os.environ.get("DUE_DATE", ""), date(2026, 10, 26))
 ADMIN_IDS = _parse_ids(os.environ.get("ADMIN_IDS", "")) or {122879776}
 FRIEND_IDS = _parse_ids(os.environ.get("FRIEND_IDS", "")) or {78689009}
 
+# Имя подруги — используется в обращениях в текстах.
+FRIEND_NAME = os.environ.get("FRIEND_NAME", "Ксюша")
+
 PREGNANCY_DAYS = 280  # 40 недель
 
 # Автоматическое «Доброе утро».
@@ -117,14 +120,17 @@ def trimester(week: int) -> str:
 # ─────────────────────────────────────────────────────────────────────
 # Клавиатуры
 # ─────────────────────────────────────────────────────────────────────
-MAIN_KEYBOARD = ReplyKeyboardMarkup(
-    [
+def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
+    """Главное меню. «Шевеления» пока показываем только админу (Версия 2)."""
+    rows = [
         ["🌅 Доброе утро", "👶 Размер малыша"],
         ["⏳ Обратный отсчёт", "🔍 Можно / нельзя"],
-        ["✅ Чек-листы", "🦶 Шевеления"],
-    ],
-    resize_keyboard=True,
-)
+    ]
+    last_row = ["✅ Чек-листы"]
+    if is_admin(user_id):
+        last_row.append("🦶 Шевеления")
+    rows.append(last_row)
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
 def week_keyboard(week: int) -> InlineKeyboardMarkup:
@@ -229,19 +235,25 @@ def countdown_text() -> str:
 # ─────────────────────────────────────────────────────────────────────
 # Хендлеры
 # ─────────────────────────────────────────────────────────────────────
+def _hello(user_id: int) -> str:
+    """Обращение в приветствии: подругу зовём по имени, остальных — ласково."""
+    return FRIEND_NAME if user_id in FRIEND_IDS else "дорогая"
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
     week = current_week()
     text = (
-        "Привет, дорогая! 💛\n\n"
+        f"Привет, {_hello(uid)}! 💛\n\n"
         "Это маленький бот-сюрприз, чтобы быть рядом с тобой в эти особенные месяцы. "
         "Он будет поддерживать тебя добрым словом, рассказывать, как растёт малыш, "
         "и помогать с полезными мелочами.\n\n"
         f"Сейчас у тебя примерно *{week}-я неделя* — {trimester(week)}.\n\n"
         "Загляни в меню внизу 👇 Всё уже работает."
     )
-    if is_admin(update.effective_user.id):
+    if is_admin(uid):
         text += "\n\n_🔧 Режим тестировщика: тебе будут доступны будущие функции (дневник и пр.)._"
-    await update.message.reply_markdown(text, reply_markup=MAIN_KEYBOARD)
+    await update.message.reply_markdown(text, reply_markup=build_main_keyboard(uid))
 
 
 async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -271,7 +283,8 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif msg == "✅ Чек-листы":
         await update.message.reply_text(CHECKLIST_PROMPT, reply_markup=CHECKLIST_KEYBOARD)
 
-    elif msg == "🦶 Шевеления":
+    elif msg == "🦶 Шевеления" and is_admin(update.effective_user.id):
+        # Пока только для админа (Версия 2 — с базой для всех).
         # Не обнуляем — показываем накопленный счёт. Сброс только кнопкой.
         count = context.user_data.get("moves", 0)
         await update.message.reply_text(
@@ -282,7 +295,8 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     else:
         await update.message.reply_text(
-            "Я тут 💛 Выбери что-нибудь из меню внизу.", reply_markup=MAIN_KEYBOARD
+            "Я тут 💛 Выбери что-нибудь из меню внизу.",
+            reply_markup=build_main_keyboard(update.effective_user.id),
         )
 
 
@@ -348,7 +362,11 @@ async def morning_job(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная авто-отправка «Доброе утро» получателям из MORNING_RECIPIENTS."""
     for chat_id in MORNING_RECIPIENTS:
         try:
-            await context.bot.send_message(chat_id, random.choice(content.GREETINGS))
+            greeting = random.choice(content.GREETINGS)
+            # Подруге — личное обращение по имени.
+            if chat_id in FRIEND_IDS:
+                greeting = f"Доброе утро, {FRIEND_NAME}! 💛\n\n{greeting}"
+            await context.bot.send_message(chat_id, greeting)
         except Exception as e:
             # Один недоступный адресат (бот заблокирован, чат не начат) не должен
             # ломать рассылку остальным.
