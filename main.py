@@ -121,15 +121,20 @@ def trimester(week: int) -> str:
 # Клавиатуры
 # ─────────────────────────────────────────────────────────────────────
 def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
-    """Главное меню. «Шевеления» пока показываем только админу (Версия 2)."""
-    rows = [
-        ["🌅 Доброе утро", "👶 Размер малыша"],
-        ["⏳ Обратный отсчёт", "🔍 Можно / нельзя"],
-    ]
-    last_row = ["✅ Чек-листы"]
-    if is_admin(user_id):
-        last_row.append("🦶 Шевеления")
-    rows.append(last_row)
+    """Главное меню, собирается под роль.
+
+    У подруги скрыты «Доброе утро» (толку от кнопки нет — авто-рассылка
+    в 9:00 всё равно приходит) и «Шевеления» (вернём в Версии 2 с базой).
+    """
+    admin = is_admin(user_id)
+    buttons = []
+    if admin:
+        buttons.append("🌅 Доброе утро")
+    buttons += ["👶 Размер малыша", "⏳ Обратный отсчёт", "🔍 Можно / нельзя", "✅ Чек-листы"]
+    if admin:
+        buttons.append("🦶 Шевеления")
+    # Раскладываем по 2 кнопки в ряд.
+    rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
 
 
@@ -265,7 +270,7 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
 
-    if msg == "🌅 Доброе утро":
+    if msg == "🌅 Доброе утро" and is_admin(update.effective_user.id):
         await update.message.reply_text(random.choice(content.GREETINGS))
 
     elif msg == "👶 Размер малыша":
