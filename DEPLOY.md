@@ -33,6 +33,18 @@
 3. Start command: `python main.py`
 4. В **Environment** добавь переменные из таблицы.
 
+## Amvera
+
+Конфиг уже в репозитории — `amvera.yml` (Python 3.11, запуск `python main.py`,
+без HTTP-порта, т.к. бот на polling).
+
+1. Создай проект на Amvera и привяжи этот git-репозиторий
+   (или запушь в git-remote Amvera).
+2. В разделе **Переменные окружения / Секреты** добавь переменные из таблицы
+   выше (`BOT_TOKEN`, `DUE_DATE`, `ADMIN_IDS`, `FRIEND_IDS`).
+3. Запусти сборку — Amvera поставит зависимости из `requirements.txt`
+   и запустит `main.py`.
+
 ## Fly.io
 
 Fly разворачивает через Docker. Нужен `Dockerfile` — попроси добавить, если
