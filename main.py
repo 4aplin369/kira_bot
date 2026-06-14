@@ -158,6 +158,18 @@ CHECKLIST_KEYBOARD = InlineKeyboardMarkup(
     ]
 )
 
+# Тексты-подсказки меню (используются и при показе, и при возврате «Назад»).
+SAFETY_PROMPT = "Что тебя интересует? Выбери раздел 👇"
+CHECKLIST_PROMPT = "Выбери чек-лист 👇"
+
+# Кнопки «Назад» к соответствующим меню.
+BACK_TO_SAFETY = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("◀ Назад к разделам", callback_data="safety:menu")]]
+)
+BACK_TO_CHECKLISTS = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("◀ Назад к чек-листам", callback_data="check:menu")]]
+)
+
 
 def moves_keyboard(count: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
@@ -245,14 +257,10 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_markdown(countdown_text())
 
     elif msg == "🔍 Можно / нельзя":
-        await update.message.reply_text(
-            "Что тебя интересует? Выбери раздел 👇", reply_markup=SAFETY_KEYBOARD
-        )
+        await update.message.reply_text(SAFETY_PROMPT, reply_markup=SAFETY_KEYBOARD)
 
     elif msg == "✅ Чек-листы":
-        await update.message.reply_text(
-            "Выбери чек-лист 👇", reply_markup=CHECKLIST_KEYBOARD
-        )
+        await update.message.reply_text(CHECKLIST_PROMPT, reply_markup=CHECKLIST_KEYBOARD)
 
     elif msg == "🦶 Шевеления":
         context.user_data["moves"] = 0
@@ -286,11 +294,27 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("safety:"):
         key = data.split(":", 1)[1]
-        await query.message.reply_markdown(content.SAFETY[key])
+        if key == "menu":
+            # Возврат к списку разделов.
+            await query.edit_message_text(SAFETY_PROMPT, reply_markup=SAFETY_KEYBOARD)
+        else:
+            await query.edit_message_text(
+                content.SAFETY[key],
+                parse_mode="Markdown",
+                reply_markup=BACK_TO_SAFETY,
+            )
 
     elif data.startswith("check:"):
         key = data.split(":", 1)[1]
-        await query.message.reply_markdown(content.CHECKLISTS[key])
+        if key == "menu":
+            # Возврат к списку чек-листов.
+            await query.edit_message_text(CHECKLIST_PROMPT, reply_markup=CHECKLIST_KEYBOARD)
+        else:
+            await query.edit_message_text(
+                content.CHECKLISTS[key],
+                parse_mode="Markdown",
+                reply_markup=BACK_TO_CHECKLISTS,
+            )
 
     elif data.startswith("move:"):
         action = data.split(":", 1)[1]
