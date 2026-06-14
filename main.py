@@ -174,9 +174,18 @@ BACK_TO_CHECKLISTS = InlineKeyboardMarkup(
 def moves_keyboard(count: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton(f"➕ Шевеление ({count})", callback_data="move:add")],
+            [InlineKeyboardButton("➕ Малыш толкнулся", callback_data="move:add")],
             [InlineKeyboardButton("🔄 Сбросить", callback_data="move:reset")],
         ]
+    )
+
+
+def moves_text(count: int) -> str:
+    return (
+        "🦶 *Счётчик шевелений*\n\n"
+        f"Насчитано: *{count}*\n\n"
+        "Жми «➕ Малыш толкнулся» каждый раз, когда чувствуешь толчок. "
+        "Счётчик работает в рамках этого захода."
     )
 
 
@@ -265,9 +274,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif msg == "🦶 Шевеления":
         context.user_data["moves"] = 0
         await update.message.reply_text(
-            "🦶 *Счётчик шевелений*\n\n"
-            "Жми кнопку каждый раз, когда малыш толкается. "
-            "Счётчик работает в рамках этого захода.",
+            moves_text(0),
             parse_mode="Markdown",
             reply_markup=moves_keyboard(0),
         )
@@ -323,9 +330,16 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif action == "reset":
             context.user_data["moves"] = 0
         count = context.user_data.get("moves", 0)
+        # Показываем число прямо в тексте — так видно, что счётчик растёт.
+        await query.answer(f"Засчитано: {count}")
         try:
-            await query.edit_message_reply_markup(reply_markup=moves_keyboard(count))
+            await query.edit_message_text(
+                moves_text(count),
+                parse_mode="Markdown",
+                reply_markup=moves_keyboard(count),
+            )
         except Exception:
+            # "Message is not modified" и т.п. — не критично.
             pass
 
 
