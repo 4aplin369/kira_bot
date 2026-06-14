@@ -185,7 +185,7 @@ def moves_text(count: int) -> str:
         "🦶 *Счётчик шевелений*\n\n"
         f"Насчитано: *{count}*\n\n"
         "Жми «➕ Малыш толкнулся» каждый раз, когда чувствуешь толчок. "
-        "Счётчик работает в рамках этого захода."
+        "Число запоминается — обнулить можно кнопкой «🔄 Сбросить»."
     )
 
 
@@ -272,11 +272,12 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(CHECKLIST_PROMPT, reply_markup=CHECKLIST_KEYBOARD)
 
     elif msg == "🦶 Шевеления":
-        context.user_data["moves"] = 0
+        # Не обнуляем — показываем накопленный счёт. Сброс только кнопкой.
+        count = context.user_data.get("moves", 0)
         await update.message.reply_text(
-            moves_text(0),
+            moves_text(count),
             parse_mode="Markdown",
-            reply_markup=moves_keyboard(0),
+            reply_markup=moves_keyboard(count),
         )
 
     else:
