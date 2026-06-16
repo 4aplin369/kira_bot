@@ -137,14 +137,12 @@ def trimester(week: int) -> str:
 # ─────────────────────────────────────────────────────────────────────
 # Клавиатуры
 # ─────────────────────────────────────────────────────────────────────
-PDR_BUTTON = "📅 Дата родов"
-
-
 def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     """Главное меню, собирается под роль.
 
     У подруги скрыты «Доброе утро» (толку от кнопки нет — авто-рассылка
     в 9:00 всё равно приходит) и «Шевеления» (вернём в Версии 2 с базой).
+    Дата родов меняется командой /pdr (отдельной кнопки нет — она уже задана).
     """
     admin = is_admin(user_id)
     buttons = []
@@ -153,7 +151,6 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     buttons += ["👶 Размер малыша", "⏳ Обратный отсчёт", "🔍 Можно / нельзя", "✅ Чек-листы"]
     if admin:
         buttons.append("🦶 Шевеления")
-    buttons.append(PDR_BUTTON)
     # Раскладываем по 2 кнопки в ряд.
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -278,12 +275,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Сейчас у тебя примерно *{week}-я неделя* — {trimester(week)}.\n\n"
         "Загляни в меню внизу 👇 Всё уже работает."
     )
-    if db.get_due_date(uid) is None:
-        text += (
-            f"\n\n📅 Чтобы расчёты были точными именно для тебя, задай свою дату "
-            f"родов — кнопка «{PDR_BUTTON}» внизу или команда /pdr."
-        )
-    if is_admin(uid):
+    # Подсказку про свою дату показываем только админу (у подруги дата уже задана).
+    if is_admin(uid) and db.get_due_date(uid) is None:
+        text += "\n\n📅 Свою дату родов можно задать командой /pdr — тогда расчёты будут по тебе."
+        text += "\n\n_🔧 Режим тестировщика: тебе будут доступны будущие функции (дневник и пр.)._"
+    elif is_admin(uid):
         text += "\n\n_🔧 Режим тестировщика: тебе будут доступны будущие функции (дневник и пр.)._"
     await update.message.reply_markdown(text, reply_markup=build_main_keyboard(uid))
 
@@ -447,10 +443,7 @@ async def pdr_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def build_pdr_conversation() -> ConversationHandler:
     return ConversationHandler(
-        entry_points=[
-            CommandHandler("pdr", pdr_start),
-            MessageHandler(filters.Text([PDR_BUTTON]), pdr_start),
-        ],
+        entry_points=[CommandHandler("pdr", pdr_start)],
         states={ASK_PDR: [MessageHandler(filters.TEXT & ~filters.COMMAND, pdr_save)]},
         fallbacks=[CommandHandler("cancel", pdr_cancel)],
     )
