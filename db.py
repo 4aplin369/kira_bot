@@ -15,7 +15,6 @@ import os
 import sqlite3
 import logging
 from contextlib import closing
-from datetime import date
 
 DB_PATH = os.environ.get("DB_PATH", os.path.join("data", "kira_bot.sqlite3"))
 
@@ -38,7 +37,6 @@ def init_db() -> None:
                 tg_id      INTEGER PRIMARY KEY,
                 name       TEXT,
                 role       TEXT,
-                due_date   TEXT,                       -- ISO ГГГГ-ММ-ДД, может быть NULL
                 created_at TEXT DEFAULT (datetime('now'))
             );
             """
@@ -57,30 +55,4 @@ def upsert_user(tg_id: int, name: str, role: str) -> None:
                 role = excluded.role
             """,
             (tg_id, name, role),
-        )
-
-
-def get_due_date(tg_id: int) -> date | None:
-    """Личная дата родов пользователя или None, если не задана."""
-    with closing(_connect()) as conn:
-        row = conn.execute(
-            "SELECT due_date FROM users WHERE tg_id = ?", (tg_id,)
-        ).fetchone()
-    if row and row["due_date"]:
-        try:
-            return date.fromisoformat(row["due_date"])
-        except ValueError:
-            return None
-    return None
-
-
-def set_due_date(tg_id: int, due: date) -> None:
-    """Задаёт/меняет личную дату родов (создаёт строку пользователя при необходимости)."""
-    with closing(_connect()) as conn, conn:
-        conn.execute(
-            """
-            INSERT INTO users (tg_id, due_date) VALUES (?, ?)
-            ON CONFLICT(tg_id) DO UPDATE SET due_date = excluded.due_date
-            """,
-            (tg_id, due.isoformat()),
         )

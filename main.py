@@ -9,17 +9,16 @@
   🔍 Можно / нельзя   — еда, кофе, лекарства, спорт
   ✅ Чек-листы        — вопросы врачу, анализы, дела по триместрам
   🦶 Шевеления        — счётчик (пока в рамках захода; память — следующий шаг)
-  📅 Дата родов       — личная ПДР у каждого, хранится в БД (db.py)
 
-Версия 2 добавляет хранение (SQLite, см. db.py): у каждого пользователя своя
-дата родов и свои данные. Если личная дата не задана — берётся глобальный
-дефолт DUE_DATE (дата Ксюши), чтобы ничего не ломалось.
+Дата родов общая для всех — DUE_DATE (берётся из .env, дефолт — дата Ксюши).
+Версия 2 добавляет хранение (SQLite, см. db.py): пользователи регистрируются
+в БД, поверх которой будут строиться дневник, фото и счётчик с памятью.
 """
 
 import os
 import random
 import logging
-from datetime import date, datetime, time, timezone, timedelta
+from datetime import date, time, timezone, timedelta
 
 from dotenv import load_dotenv
 
@@ -37,7 +36,6 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    ConversationHandler,
     ContextTypes,
     filters,
 )
@@ -103,25 +101,21 @@ def role_for(user_id: int) -> str:
     return "other"
 
 
-def due_date_for(user_id: int) -> date:
-    """Личная дата родов из БД; если не задана — глобальный дефолт (дата Ксюши)."""
-    return db.get_due_date(user_id) or DUE_DATE
-
 logging.basicConfig(
     format="%(asctime)s — %(name)s — %(levelname)s — %(message)s",
     level=logging.INFO,
 )
 
 # ─────────────────────────────────────────────────────────────────────
-# Расчёт срока (всё от личной даты родов пользователя)
+# Расчёт срока (от общей даты родов DUE_DATE)
 # ─────────────────────────────────────────────────────────────────────
-def days_left(due: date) -> int:
-    return (due - date.today()).days
+def days_left() -> int:
+    return (DUE_DATE - date.today()).days
 
 
-def current_week(due: date) -> int:
-    """Текущая акушерская неделя (1–40+) по дате родов."""
-    gestational_days = PREGNANCY_DAYS - days_left(due)
+def current_week() -> int:
+    """Текущая акушерская неделя (1–40+)."""
+    gestational_days = PREGNANCY_DAYS - days_left()
     week = gestational_days // 7
     return max(1, week)
 
@@ -142,7 +136,6 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
 
     У подруги скрыты «Доброе утро» (толку от кнопки нет — авто-рассылка
     в 9:00 всё равно приходит) и «Шевеления» (вернём в Версии 2 с базой).
-    Дата родов меняется командой /pdr (отдельной кнопки нет — она уже задана).
     """
     admin = is_admin(user_id)
     buttons = []
@@ -236,9 +229,9 @@ def baby_size_text(week: int) -> str:
     )
 
 
-def countdown_text(due: date) -> str:
-    d = days_left(due)
-    week = current_week(due)
+def countdown_text() -> str:
+    d = days_left()
+    week = current_week()
     if d > 0:
         weeks = d // 7
         days = d % 7
@@ -247,7 +240,7 @@ def countdown_text(due: date) -> str:
             f"⏳ *До встречи с малышом*\n\n"
             f"Осталось *{d}* дней ({tail})\n\n"
             f"Сейчас {week}-я неделя, {trimester(week)}.\n"
-            f"Дата встречи: {due.strftime('%d.%m.%Y')} 💛"
+            f"Дата встречи: {DUE_DATE.strftime('%d.%m.%Y')} 💛"
         )
     elif d == 0:
         return "⏳ Сегодня та самая дата! Малыш может появиться со дня на день. 💛"
@@ -266,7 +259,7 @@ def _hello(user_id: int) -> str:
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     uid = update.effective_user.id
     db.upsert_user(uid, update.effective_user.first_name or "", role_for(uid))
-    week = current_week(due_date_for(uid))
+    week = current_week()
     text = (
         f"Привет, {_hello(uid)}! 💛\n\n"
         "Это маленький бот-сюрприз, чтобы быть рядом с тобой в эти особенные месяцы. "
@@ -275,11 +268,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Сейчас у тебя примерно *{week}-я неделя* — {trimester(week)}.\n\n"
         "Загляни в меню внизу 👇 Всё уже работает."
     )
-    # Подсказку про свою дату показываем только админу (у подруги дата уже задана).
-    if is_admin(uid) and db.get_due_date(uid) is None:
-        text += "\n\n📅 Свою дату родов можно задать командой /pdr — тогда расчёты будут по тебе."
-        text += "\n\n_🔧 Режим тестировщика: тебе будут доступны будущие функции (дневник и пр.)._"
-    elif is_admin(uid):
+    if is_admin(uid):
         text += "\n\n_🔧 Режим тестировщика: тебе будут доступны будущие функции (дневник и пр.)._"
     await update.message.reply_markdown(text, reply_markup=build_main_keyboard(uid))
 
@@ -298,13 +287,13 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(random.choice(content.GREETINGS))
 
     elif msg == "👶 Размер малыша":
-        week = current_week(due_date_for(uid))
+        week = current_week()
         await update.message.reply_markdown(
             baby_size_text(week), reply_markup=week_keyboard(week)
         )
 
     elif msg == "⏳ Обратный отсчёт":
-        await update.message.reply_markdown(countdown_text(due_date_for(uid)))
+        await update.message.reply_markdown(countdown_text())
 
     elif msg == "🔍 Можно / нельзя":
         await update.message.reply_text(SAFETY_PROMPT, reply_markup=SAFETY_KEYBOARD)
@@ -336,7 +325,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if data.startswith("week:"):
         arg = data.split(":", 1)[1]
-        week = current_week(due_date_for(query.from_user.id)) if arg == "current" else int(arg)
+        week = current_week() if arg == "current" else int(arg)
         await query.edit_message_text(
             baby_size_text(week),
             parse_mode="Markdown",
@@ -387,68 +376,6 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Ввод даты родов (ПДР) — диалог
-# ─────────────────────────────────────────────────────────────────────
-ASK_PDR = 1  # состояние диалога: ждём дату
-
-
-def _parse_user_date(text: str) -> date | None:
-    """Парсит дату, введённую человеком: ДД.ММ.ГГГГ (а также ДД.ММ.ГГ, ГГГГ-ММ-ДД)."""
-    for fmt in ("%d.%m.%Y", "%d.%m.%y", "%Y-%m-%d"):
-        try:
-            return datetime.strptime(text.strip(), fmt).date()
-        except ValueError:
-            continue
-    return None
-
-
-async def pdr_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    current = db.get_due_date(uid)
-    hint = f"\n\nСейчас задано: *{current.strftime('%d.%m.%Y')}*." if current else ""
-    await update.message.reply_markdown(
-        "📅 Введи предполагаемую дату родов (ПДР) в формате *ДД.ММ.ГГГГ*, "
-        f"например `26.10.2026`.{hint}\n\nОтменить — /cancel."
-    )
-    return ASK_PDR
-
-
-async def pdr_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    uid = update.effective_user.id
-    due = _parse_user_date(update.message.text)
-    if not due:
-        await update.message.reply_text(
-            "Не понял дату 🙈 Нужен формат ДД.ММ.ГГГГ, например 26.10.2026. "
-            "Попробуй ещё раз или /cancel."
-        )
-        return ASK_PDR
-    db.set_due_date(uid, due)
-    week = current_week(due)
-    await update.message.reply_markdown(
-        f"Готово! 💛 Твоя дата родов: *{due.strftime('%d.%m.%Y')}*.\n"
-        f"Сейчас примерно *{week}-я неделя* — {trimester(week)}.",
-        reply_markup=build_main_keyboard(uid),
-    )
-    return ConversationHandler.END
-
-
-async def pdr_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Окей, оставил как было 💛",
-        reply_markup=build_main_keyboard(update.effective_user.id),
-    )
-    return ConversationHandler.END
-
-
-def build_pdr_conversation() -> ConversationHandler:
-    return ConversationHandler(
-        entry_points=[CommandHandler("pdr", pdr_start)],
-        states={ASK_PDR: [MessageHandler(filters.TEXT & ~filters.COMMAND, pdr_save)]},
-        fallbacks=[CommandHandler("cancel", pdr_cancel)],
-    )
-
-
 async def morning_job(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная авто-отправка «Доброе утро» получателям из MORNING_RECIPIENTS."""
     for chat_id in MORNING_RECIPIENTS:
@@ -476,9 +403,6 @@ def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", whoami))
-    # Диалог ввода даты родов — до общего текстового роутера, чтобы перехватывать
-    # ввод даты и нажатие кнопки «Дата родов».
-    app.add_handler(build_pdr_conversation())
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
 
