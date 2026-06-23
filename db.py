@@ -39,6 +39,18 @@ def init_db() -> None:
                 role       TEXT,
                 created_at TEXT DEFAULT (datetime('now'))
             );
+
+            -- Дневник: фото животика по неделям. Привязка к user_id —
+            -- у каждого свой дневник, фото не пересекаются.
+            CREATE TABLE IF NOT EXISTS diary (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id       INTEGER NOT NULL,
+                week          INTEGER,
+                photo_file_id TEXT NOT NULL,   -- file_id фото в Telegram
+                note          TEXT,            -- подпись к фото, если была
+                created_at    TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_diary_user ON diary(user_id);
             """
         )
     logging.info("База данных готова: %s", DB_PATH)
@@ -56,3 +68,38 @@ def upsert_user(tg_id: int, name: str, role: str) -> None:
             """,
             (tg_id, name, role),
         )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Дневник (фото животика)
+# ─────────────────────────────────────────────────────────────────────
+def add_photo(user_id: int, week: int | None, photo_file_id: str, note: str | None) -> None:
+    """Сохраняет фото в дневник пользователя."""
+    with closing(_connect()) as conn, conn:
+        conn.execute(
+            "INSERT INTO diary (user_id, week, photo_file_id, note) VALUES (?, ?, ?, ?)",
+            (user_id, week, photo_file_id, note),
+        )
+
+
+def count_photos(user_id: int) -> int:
+    """Сколько фото в дневнике пользователя."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM diary WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return row["n"] if row else 0
+
+
+def get_photos(user_id: int) -> list[sqlite3.Row]:
+    """Все фото пользователя по порядку: по неделе, затем по времени добавления."""
+    with closing(_connect()) as conn:
+        return conn.execute(
+            """
+            SELECT week, photo_file_id, note
+            FROM diary
+            WHERE user_id = ?
+            ORDER BY week IS NULL, week, created_at, id
+            """,
+            (user_id,),
+        ).fetchall()

@@ -9,10 +9,12 @@
   🔍 Можно / нельзя   — еда, кофе, лекарства, спорт
   ✅ Чек-листы        — вопросы врачу, анализы, дела по триместрам
   🦶 Шевеления        — счётчик (пока в рамках захода; память — следующий шаг)
+  📖 Дневник          — фото животика по неделям + лента (пока только у админа)
 
 Дата родов общая для всех — DUE_DATE (берётся из .env, дефолт — дата Ксюши).
 Версия 2 добавляет хранение (SQLite, см. db.py): пользователи регистрируются
-в БД, поверх которой будут строиться дневник, фото и счётчик с памятью.
+в БД, дневник хранит фото (Telegram file_id) по неделям. Дальше — счётчик
+с памятью и коллажи.
 """
 
 import os
@@ -30,6 +32,7 @@ from telegram import (
     ReplyKeyboardMarkup,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
+    InputMediaPhoto,
 )
 from telegram.ext import (
     ApplicationBuilder,
@@ -131,6 +134,9 @@ def trimester(week: int) -> str:
 # ─────────────────────────────────────────────────────────────────────
 # Клавиатуры
 # ─────────────────────────────────────────────────────────────────────
+DIARY_BUTTON = "📖 Дневник"
+
+
 def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     """Главное меню, собирается под роль.
 
@@ -143,7 +149,7 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
         buttons.append("🌅 Доброе утро")
     buttons += ["👶 Размер малыша", "⏳ Обратный отсчёт", "🔍 Можно / нельзя", "✅ Чек-листы"]
     if admin:
-        buttons.append("🦶 Шевеления")
+        buttons += ["🦶 Шевеления", DIARY_BUTTON]
     # Раскладываем по 2 кнопки в ряд.
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -191,6 +197,21 @@ BACK_TO_SAFETY = InlineKeyboardMarkup(
 BACK_TO_CHECKLISTS = InlineKeyboardMarkup(
     [[InlineKeyboardButton("◀ Назад к чек-листам", callback_data="check:menu")]]
 )
+
+# Дневник животика.
+DIARY_KEYBOARD = InlineKeyboardMarkup(
+    [[InlineKeyboardButton("🖼 Моя лента", callback_data="diary:feed")]]
+)
+
+
+def diary_intro_text(total: int) -> str:
+    return (
+        "📖 *Дневник животика*\n\n"
+        "Просто пришли мне фото 📸 — я сохраню его и подпишу текущей неделей. "
+        "Если добавишь подпись к фото, она тоже сохранится.\n\n"
+        f"Сейчас в дневнике фото: *{total}*.\n"
+        "Посмотреть всё — кнопка ниже 👇"
+    )
 
 
 def moves_keyboard(count: int) -> InlineKeyboardMarkup:
@@ -311,6 +332,12 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=moves_keyboard(count),
         )
 
+    elif msg == DIARY_BUTTON and is_admin(uid):
+        # Пока дневник только у админа (обкатываем перед открытием подруге).
+        await update.message.reply_markdown(
+            diary_intro_text(db.count_photos(uid)), reply_markup=DIARY_KEYBOARD
+        )
+
     else:
         await update.message.reply_text(
             "Я тут 💛 Выбери что-нибудь из меню внизу.",
@@ -375,6 +402,56 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # "Message is not modified" и т.п. — не критично.
             pass
 
+    elif data == "diary:feed":
+        await send_diary_feed(context, query.message.chat_id, query.from_user.id)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Дневник: приём фото и показ ленты
+# ─────────────────────────────────────────────────────────────────────
+async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Любое присланное фото сохраняем в дневник (пока — только у админа)."""
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        return
+    # У фото несколько размеров — берём самый большой (последний).
+    file_id = update.message.photo[-1].file_id
+    week = current_week()
+    note = update.message.caption or None
+    db.add_photo(uid, week, file_id, note)
+    total = db.count_photos(uid)
+    await update.message.reply_markdown(
+        f"📸 Сохранила в дневник: *Неделя {week}*. Всего фото: *{total}*.",
+        reply_markup=DIARY_KEYBOARD,
+    )
+
+
+def _feed_caption(row) -> str:
+    week = row["week"]
+    head = f"Неделя {week}" if week is not None else "Без недели"
+    return f"{head} · {row['note']}" if row["note"] else head
+
+
+async def send_diary_feed(context: ContextTypes.DEFAULT_TYPE, chat_id: int, uid: int):
+    """Шлёт все фото дневника пользователя по неделям, пачками до 10 (лимит Telegram)."""
+    photos = db.get_photos(uid)
+    if not photos:
+        await context.bot.send_message(
+            chat_id, "В дневнике пока пусто. Пришли первое фото животика 💛"
+        )
+        return
+    await context.bot.send_message(chat_id, f"🖼 Твоя лента — фото: {len(photos)}")
+    media = [InputMediaPhoto(p["photo_file_id"], caption=_feed_caption(p)) for p in photos]
+    for i in range(0, len(media), 10):
+        chunk = media[i:i + 10]
+        # Медиагруппа требует минимум 2 элемента — одиночное фото шлём отдельно.
+        if len(chunk) == 1:
+            await context.bot.send_photo(
+                chat_id, chunk[0].media, caption=chunk[0].caption
+            )
+        else:
+            await context.bot.send_media_group(chat_id, chunk)
+
 
 async def morning_job(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная авто-отправка «Доброе утро» получателям из MORNING_RECIPIENTS."""
@@ -404,6 +481,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", whoami))
     app.add_handler(CallbackQueryHandler(on_callback))
+    app.add_handler(MessageHandler(filters.PHOTO, on_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
 
     # Ежедневное «Доброе утро» в 9:00 по Москве.
