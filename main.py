@@ -4,7 +4,7 @@
 
 Что умеет:
   🌅 Доброе утро      — тёплое сообщение и комплимент
-  👶 Размер малыша    — по текущей неделе (с фруктом/овощем), с листанием недель
+  👶 Что нового у малыша    — по текущей неделе (с фруктом/овощем), с листанием недель
   ⏳ Обратный отсчёт  — сколько дней до встречи с малышом
   🔍 Можно / нельзя   — еда, кофе, лекарства, спорт
   ✅ Чек-листы        — вопросы врачу, анализы, дела по триместрам
@@ -150,7 +150,7 @@ def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     if admin:
         buttons.append("🌅 Доброе утро")
     buttons += [
-        "👶 Размер малыша", "⏳ Обратный отсчёт", "🔍 Можно / нельзя",
+        "👶 Что нового у малыша", "⏳ Обратный отсчёт", "🔍 Можно / нельзя",
         "✅ Чек-листы", "🦶 Шевеления", DIARY_BUTTON,
     ]
     # Раскладываем по 2 кнопки в ряд.
@@ -311,7 +311,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if msg == "🌅 Доброе утро" and is_admin(uid):
         await update.message.reply_text(random.choice(content.GREETINGS))
 
-    elif msg == "👶 Размер малыша":
+    elif msg == "👶 Что нового у малыша":
         week = current_week()
         await update.message.reply_markdown(
             baby_size_text(week), reply_markup=week_keyboard(week)
