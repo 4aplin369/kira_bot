@@ -20,7 +20,7 @@
 import os
 import random
 import logging
-from datetime import date, time, timezone, timedelta
+from datetime import date, datetime, time, timezone, timedelta
 
 from dotenv import load_dotenv
 
@@ -471,6 +471,22 @@ async def morning_job(context: ContextTypes.DEFAULT_TYPE):
             logging.warning("Не смог отправить утро для %s: %s", chat_id, e)
 
 
+async def on_startup(application):
+    """После запуска шлём админам сигнал «бот поднялся» — удобно ловить деплои.
+
+    На Amvera перезапуск происходит при каждом передеплое, так что это
+    фактически уведомление «обновление приехало».
+    """
+    now = datetime.now(MORNING_TZ).strftime("%d.%m.%Y %H:%M")
+    text = f"🔄 Бот обновился и перезапущен.\n🕒 {now} МСК"
+    for chat_id in ADMIN_IDS:
+        try:
+            await application.bot.send_message(chat_id, text)
+        except Exception as e:
+            # Админ ещё не открыл чат с ботом / заблокировал — не критично.
+            logging.warning("Не смог уведомить админа %s о старте: %s", chat_id, e)
+
+
 def main():
     if not BOT_TOKEN:
         raise SystemExit(
@@ -480,7 +496,7 @@ def main():
         )
     db.init_db()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).post_init(on_startup).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", whoami))
     app.add_handler(CallbackQueryHandler(on_callback))
