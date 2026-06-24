@@ -249,7 +249,7 @@ def baby_size_text(week: int) -> str:
         f"*Неделя {week}* · {trimester(week)}\n\n"
         f"Малыш размером с {fruit}\n"
         f"📏 {size}\n\n"
-        f"🌱 *Что нового на этой неделе:*\n{note}"
+        f"🌱 *Что нового у малыша:*\n{note}"
     )
 
 
