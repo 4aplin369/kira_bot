@@ -462,7 +462,10 @@ async def morning_job(context: ContextTypes.DEFAULT_TYPE):
             # Подруге — личное обращение по имени.
             if chat_id in FRIEND_IDS:
                 greeting = f"Доброе утро, {FRIEND_NAME}! 💛\n\n{greeting}"
-            await context.bot.send_message(chat_id, greeting)
+            # Прицепляем меню — так кнопки появляются/обновляются каждое утро.
+            await context.bot.send_message(
+                chat_id, greeting, reply_markup=build_main_keyboard(chat_id)
+            )
         except Exception as e:
             # Один недоступный адресат (бот заблокирован, чат не начат) не должен
             # ломать рассылку остальным.
@@ -496,7 +499,10 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     sent, failed = 0, 0
     for chat_id in recipients:
         try:
-            await context.bot.send_message(chat_id, text, parse_mode="Markdown")
+            await context.bot.send_message(
+                chat_id, text, parse_mode="Markdown",
+                reply_markup=build_main_keyboard(chat_id),
+            )
             sent += 1
         except Exception as e:
             # Кто-то не открыл чат / заблокировал — пропускаем.
