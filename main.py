@@ -490,8 +490,11 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(uid):
         return
     text = " ".join(context.args) if context.args else ANNOUNCE_DEFAULT
+    # Адресаты: все из БД + известные по .env (на случай, если кто-то ещё
+    # не попал в базу). set убирает дубли.
+    recipients = set(db.get_all_user_ids()) | ADMIN_IDS | FRIEND_IDS
     sent, failed = 0, 0
-    for chat_id in db.get_all_user_ids():
+    for chat_id in recipients:
         try:
             await context.bot.send_message(chat_id, text, parse_mode="Markdown")
             sent += 1
