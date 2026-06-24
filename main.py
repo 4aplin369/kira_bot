@@ -35,6 +35,7 @@ from telegram import (
     InlineKeyboardMarkup,
     InputMediaPhoto,
 )
+from telegram.error import TimedOut, NetworkError
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -513,6 +514,15 @@ async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    """Короткий лог вместо полотна traceback. Сетевые сбои — не критичны."""
+    err = context.error
+    if isinstance(err, (TimedOut, NetworkError)):
+        logging.warning("Сетевой сбой с Telegram (обычно проходит сам): %s", err)
+    else:
+        logging.error("Ошибка при обработке апдейта: %s", err)
+
+
 def main():
     if not BOT_TOKEN:
         raise SystemExit(
@@ -522,13 +532,23 @@ def main():
         )
     db.init_db()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    # Таймауты повыше — связь Amvera ↔ Telegram бывает медленной/нестабильной.
+    app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .connect_timeout(30)
+        .read_timeout(30)
+        .write_timeout(30)
+        .pool_timeout(30)
+        .build()
+    )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", whoami))
     app.add_handler(CommandHandler("anons", announce))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.PHOTO, on_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
+    app.add_error_handler(on_error)
 
     # Ежедневное «Доброе утро» в 9:00 по Москве.
     app.job_queue.run_daily(morning_job, time=MORNING_TIME, name="morning")
