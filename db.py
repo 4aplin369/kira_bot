@@ -78,6 +78,13 @@ def upsert_user(tg_id: int, name: str, role: str) -> None:
         )
 
 
+def get_all_user_ids() -> list[int]:
+    """Все, кто хоть раз заходил в бота (нажимал /start) — для рассылки-анонса."""
+    with closing(_connect()) as conn:
+        rows = conn.execute("SELECT tg_id FROM users").fetchall()
+    return [r["tg_id"] for r in rows]
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Дневник (фото животика)
 # ─────────────────────────────────────────────────────────────────────

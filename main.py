@@ -8,8 +8,9 @@
   ⏳ Обратный отсчёт  — сколько дней до встречи с малышом
   🔍 Можно / нельзя   — еда, кофе, лекарства, спорт
   ✅ Чек-листы        — вопросы врачу, анализы, дела по триместрам
-  🦶 Шевеления        — счётчик (пока в рамках захода; память — следующий шаг)
-  📖 Дневник          — фото животика по неделям + лента (пока только у админа)
+  🦶 Шевеления        — счётчик толчков, число хранится в БД (переживает рестарт)
+  📖 Дневник          — фото животика по неделям + лента
+  📣 /anons           — ручная рассылка анонса всем (команда админа)
 
 Дата родов общая для всех — DUE_DATE (берётся из .env, дефолт — дата Ксюши).
 Версия 2 добавляет хранение (SQLite, см. db.py): пользователи регистрируются
@@ -20,7 +21,7 @@
 import os
 import random
 import logging
-from datetime import date, datetime, time, timezone, timedelta
+from datetime import date, time, timezone, timedelta
 
 from dotenv import load_dotenv
 
@@ -140,16 +141,17 @@ DIARY_BUTTON = "📖 Дневник"
 def build_main_keyboard(user_id: int) -> ReplyKeyboardMarkup:
     """Главное меню, собирается под роль.
 
-    У подруги скрыты «Доброе утро» (толку от кнопки нет — авто-рассылка
-    в 9:00 всё равно приходит) и «Шевеления» (вернём в Версии 2 с базой).
+    «Шевеления» и «Дневник» доступны всем. У подруги скрыта только кнопка
+    «Доброе утро» (толку от неё нет — авто-рассылка в 9:00 всё равно приходит).
     """
     admin = is_admin(user_id)
     buttons = []
     if admin:
         buttons.append("🌅 Доброе утро")
-    buttons += ["👶 Размер малыша", "⏳ Обратный отсчёт", "🔍 Можно / нельзя", "✅ Чек-листы"]
-    if admin:
-        buttons += ["🦶 Шевеления", DIARY_BUTTON]
+    buttons += [
+        "👶 Размер малыша", "⏳ Обратный отсчёт", "🔍 Можно / нельзя",
+        "✅ Чек-листы", "🦶 Шевеления", DIARY_BUTTON,
+    ]
     # Раскладываем по 2 кнопки в ряд.
     rows = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -322,8 +324,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif msg == "✅ Чек-листы":
         await update.message.reply_text(CHECKLIST_PROMPT, reply_markup=CHECKLIST_KEYBOARD)
 
-    elif msg == "🦶 Шевеления" and is_admin(uid):
-        # Пока только для админа (Версия 2 — с базой для всех).
+    elif msg == "🦶 Шевеления":
         # Счёт хранится в БД — переживает перезапуск. Сброс только кнопкой.
         count = db.get_moves(uid)
         await update.message.reply_text(
@@ -332,8 +333,7 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=moves_keyboard(count),
         )
 
-    elif msg == DIARY_BUTTON and is_admin(uid):
-        # Пока дневник только у админа (обкатываем перед открытием подруге).
+    elif msg == DIARY_BUTTON:
         await update.message.reply_markdown(
             diary_intro_text(db.count_photos(uid)), reply_markup=DIARY_KEYBOARD
         )
@@ -413,10 +413,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Дневник: приём фото и показ ленты
 # ─────────────────────────────────────────────────────────────────────
 async def on_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Любое присланное фото сохраняем в дневник (пока — только у админа)."""
+    """Любое присланное фото сохраняем в дневник пользователя."""
     uid = update.effective_user.id
-    if not is_admin(uid):
-        return
     # У фото несколько размеров — берём самый большой (последний).
     file_id = update.message.photo[-1].file_id
     week = current_week()
@@ -471,20 +469,39 @@ async def morning_job(context: ContextTypes.DEFAULT_TYPE):
             logging.warning("Не смог отправить утро для %s: %s", chat_id, e)
 
 
-async def on_startup(application):
-    """После запуска шлём админам сигнал «бот поднялся» — удобно ловить деплои.
+# ─────────────────────────────────────────────────────────────────────
+# Анонс «что новенького» — ручная рассылка всем (по команде админа)
+# ─────────────────────────────────────────────────────────────────────
+ANNOUNCE_DEFAULT = (
+    "✨ *В боте появилось новенькое!*\n\n"
+    "Загляни в меню — теперь я умею больше:\n"
+    "🦶 *Шевеления* — считать толчки малыша, число запоминается.\n"
+    "📖 *Дневник* — присылай мне фото животика, я сохраню их по неделям, "
+    "а потом покажу всю ленту 💛"
+)
 
-    На Amvera перезапуск происходит при каждом передеплое, так что это
-    фактически уведомление «обновление приехало».
+
+async def announce(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Рассылает анонс всем зарегистрированным пользователям. Только для админа.
+
+    Без аргументов шлёт ANNOUNCE_DEFAULT; можно задать свой текст: /anons Привет!
     """
-    now = datetime.now(MORNING_TZ).strftime("%d.%m.%Y %H:%M")
-    text = f"🔄 Бот обновился и перезапущен.\n🕒 {now} МСК"
-    for chat_id in ADMIN_IDS:
+    uid = update.effective_user.id
+    if not is_admin(uid):
+        return
+    text = " ".join(context.args) if context.args else ANNOUNCE_DEFAULT
+    sent, failed = 0, 0
+    for chat_id in db.get_all_user_ids():
         try:
-            await application.bot.send_message(chat_id, text)
+            await context.bot.send_message(chat_id, text, parse_mode="Markdown")
+            sent += 1
         except Exception as e:
-            # Админ ещё не открыл чат с ботом / заблокировал — не критично.
-            logging.warning("Не смог уведомить админа %s о старте: %s", chat_id, e)
+            # Кто-то не открыл чат / заблокировал — пропускаем.
+            failed += 1
+            logging.warning("Анонс не доставлен %s: %s", chat_id, e)
+    await update.message.reply_text(
+        f"📣 Анонс отправлен. Доставлено: {sent}, не дошло: {failed}."
+    )
 
 
 def main():
@@ -496,9 +513,10 @@ def main():
         )
     db.init_db()
 
-    app = ApplicationBuilder().token(BOT_TOKEN).post_init(on_startup).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", whoami))
+    app.add_handler(CommandHandler("anons", announce))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.PHOTO, on_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
