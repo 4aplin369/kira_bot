@@ -250,6 +250,7 @@ def baby_size_text(week: int) -> str:
         f"Малыш размером с {fruit}\n"
         f"📏 {size}\n\n"
         f"🌱 *Что нового у малыша:*\n{note}"
+        f"{content.BABY_SOURCE}"
     )
 
 
