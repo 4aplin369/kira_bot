@@ -51,6 +51,14 @@ def init_db() -> None:
                 created_at    TEXT DEFAULT (datetime('now'))
             );
             CREATE INDEX IF NOT EXISTS idx_diary_user ON diary(user_id);
+
+            -- Счётчик шевелений: по одному значению на пользователя.
+            -- Хранится в БД, поэтому переживает перезапуск бота.
+            CREATE TABLE IF NOT EXISTS moves (
+                user_id    INTEGER PRIMARY KEY,
+                count      INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT DEFAULT (datetime('now'))
+            );
             """
         )
     logging.info("База данных готова: %s", DB_PATH)
@@ -103,3 +111,47 @@ def get_photos(user_id: int) -> list[sqlite3.Row]:
             """,
             (user_id,),
         ).fetchall()
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Счётчик шевелений (хранится в БД — переживает перезапуск)
+# ─────────────────────────────────────────────────────────────────────
+def get_moves(user_id: int) -> int:
+    """Текущее число шевелений пользователя (0, если ещё не считал)."""
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT count FROM moves WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return row["count"] if row else 0
+
+
+def add_move(user_id: int) -> int:
+    """Увеличивает счётчик на 1 и возвращает новое значение."""
+    with closing(_connect()) as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO moves (user_id, count) VALUES (?, 1)
+            ON CONFLICT(user_id) DO UPDATE SET
+                count = count + 1,
+                updated_at = datetime('now')
+            """,
+            (user_id,),
+        )
+        row = conn.execute(
+            "SELECT count FROM moves WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    return row["count"]
+
+
+def reset_moves(user_id: int) -> None:
+    """Сбрасывает счётчик в 0."""
+    with closing(_connect()) as conn, conn:
+        conn.execute(
+            """
+            INSERT INTO moves (user_id, count) VALUES (?, 0)
+            ON CONFLICT(user_id) DO UPDATE SET
+                count = 0,
+                updated_at = datetime('now')
+            """,
+            (user_id,),
+        )

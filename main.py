@@ -324,8 +324,8 @@ async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif msg == "🦶 Шевеления" and is_admin(uid):
         # Пока только для админа (Версия 2 — с базой для всех).
-        # Не обнуляем — показываем накопленный счёт. Сброс только кнопкой.
-        count = context.user_data.get("moves", 0)
+        # Счёт хранится в БД — переживает перезапуск. Сброс только кнопкой.
+        count = db.get_moves(uid)
         await update.message.reply_text(
             moves_text(count),
             parse_mode="Markdown",
@@ -385,11 +385,14 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data.startswith("move:"):
         action = data.split(":", 1)[1]
+        uid = query.from_user.id
         if action == "add":
-            context.user_data["moves"] = context.user_data.get("moves", 0) + 1
+            count = db.add_move(uid)
         elif action == "reset":
-            context.user_data["moves"] = 0
-        count = context.user_data.get("moves", 0)
+            db.reset_moves(uid)
+            count = 0
+        else:
+            count = db.get_moves(uid)
         # Показываем число прямо в тексте — так видно, что счётчик растёт.
         await query.answer(f"Засчитано: {count}")
         try:
