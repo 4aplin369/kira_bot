@@ -525,6 +525,17 @@ async def milestones_job(context: ContextTypes.DEFAULT_TYPE):
         db.mark_event_sent("__init__")
 
 
+async def check_milestones_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ручной запуск проверки вех (для теста). Только админ."""
+    if not is_admin(update.effective_user.id):
+        return
+    await milestones_job(context)
+    await update.message.reply_text(
+        f"✅ Проверка вех выполнена. Сейчас: {current_week()}-я неделя, "
+        f"до родов {days_left()} дн."
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Анонс «что новенького» — ручная рассылка всем (по команде админа)
 # ─────────────────────────────────────────────────────────────────────
@@ -597,6 +608,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("id", whoami))
     app.add_handler(CommandHandler("anons", announce))
+    app.add_handler(CommandHandler("mile", check_milestones_cmd))
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.PHOTO, on_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_router))
