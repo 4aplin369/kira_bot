@@ -59,6 +59,12 @@ def init_db() -> None:
                 count      INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT DEFAULT (datetime('now'))
             );
+
+            -- Отправленные вехи-поздравления (по ключу), чтобы не слать повторно.
+            CREATE TABLE IF NOT EXISTS events_sent (
+                key        TEXT PRIMARY KEY,
+                created_at TEXT DEFAULT (datetime('now'))
+            );
             """
         )
     logging.info("База данных готова: %s", DB_PATH)
@@ -161,4 +167,22 @@ def reset_moves(user_id: int) -> None:
                 updated_at = datetime('now')
             """,
             (user_id,),
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Вехи-поздравления: отметки об отправке (чтобы не слать повторно)
+# ─────────────────────────────────────────────────────────────────────
+def is_event_sent(key: str) -> bool:
+    with closing(_connect()) as conn:
+        row = conn.execute(
+            "SELECT 1 FROM events_sent WHERE key = ?", (key,)
+        ).fetchone()
+    return row is not None
+
+
+def mark_event_sent(key: str) -> None:
+    with closing(_connect()) as conn, conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO events_sent (key) VALUES (?)", (key,)
         )

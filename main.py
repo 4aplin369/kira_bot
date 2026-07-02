@@ -89,6 +89,8 @@ PREGNANCY_DAYS = 280  # 40 недель
 # Автоматическое «Доброе утро».
 MORNING_TZ = timezone(timedelta(hours=3))   # Москва, UTC+3 (без перехода на лето)
 MORNING_TIME = time(9, 0, tzinfo=MORNING_TZ)
+# Вехи-поздравления проверяем чуть позже утреннего, чтобы не слиплись.
+MILESTONE_TIME = time(9, 5, tzinfo=MORNING_TZ)
 
 # Кому слать автоутро: подруге и админам (без дублей).
 MORNING_RECIPIENTS = ADMIN_IDS | FRIEND_IDS
@@ -474,6 +476,56 @@ async def morning_job(context: ContextTypes.DEFAULT_TYPE):
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Вехи-поздравления
+# ─────────────────────────────────────────────────────────────────────
+# (ключ, текст, условие). Условие — функция от (неделя, дней до родов).
+# Веха срабатывает, когда условие впервые становится истинным.
+MILESTONES = [
+    ("trimester2", "🌿 *Начался второй триместр!*\nОбычно это самый спокойный и "
+     "приятный период беременности. Насладись им 💛", lambda week, days: week >= 13),
+    ("equator", "🎉 *Экватор беременности!*\nПоловину пути вы с малышом уже прошли "
+     "вместе. Ты большая молодец!", lambda week, days: week >= 20),
+    ("trimester3", "🤍 *Начался третий триместр!*\nФинишная прямая. Малыш уже совсем "
+     "большой — скоро встретитесь.", lambda week, days: week >= 28),
+    ("days100", "💯 *Осталось 100 дней* до встречи с малышом!\nОтсчёт пошёл 💛",
+     lambda week, days: days <= 100),
+    ("days50", "✨ *Осталось всего 50 дней!*\nСовсем скоро твой малыш будет с тобой.",
+     lambda week, days: days <= 50),
+    ("days30", "📅 *Остался последний месяц!*\nМожно потихоньку готовиться к встрече.",
+     lambda week, days: days <= 30),
+    ("days10", "🔟 *Осталось около 10 дней!*\nМалыш может появиться со дня на день 💛",
+     lambda week, days: days <= 10),
+    ("days3", "🍼 *Совсем скоро!*\nОсталось несколько дней. Дыши и верь — всё будет "
+     "хорошо.", lambda week, days: days <= 3),
+]
+
+
+async def milestones_job(context: ContextTypes.DEFAULT_TYPE):
+    """Раз в день проверяет вехи и шлёт поздравления получателям.
+
+    При первом запуске уже пройденные вехи молча помечаются как отправленные
+    (без рассылки) — чтобы не завалить сообщениями о прошлом.
+    """
+    week = current_week()
+    days = days_left()
+    first_run = not db.is_event_sent("__init__")
+
+    for key, text, reached in MILESTONES:
+        if not reached(week, days) or db.is_event_sent(key):
+            continue
+        if not first_run:
+            for chat_id in MORNING_RECIPIENTS:
+                try:
+                    await context.bot.send_message(chat_id, text, parse_mode="Markdown")
+                except Exception as e:
+                    logging.warning("Веха %s не доставлена %s: %s", key, chat_id, e)
+        db.mark_event_sent(key)  # помечаем в любом случае (при first_run — молча)
+
+    if first_run:
+        db.mark_event_sent("__init__")
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Анонс «что новенького» — ручная рассылка всем (по команде админа)
 # ─────────────────────────────────────────────────────────────────────
 ANNOUNCE_DEFAULT = (
@@ -552,6 +604,8 @@ def main():
 
     # Ежедневное «Доброе утро» в 9:00 по Москве.
     app.job_queue.run_daily(morning_job, time=MORNING_TIME, name="morning")
+    # Проверка вех-поздравлений в 9:05.
+    app.job_queue.run_daily(milestones_job, time=MILESTONE_TIME, name="milestones")
 
     logging.info(
         "Бот запущен. Автоутро в %s для %s.",
