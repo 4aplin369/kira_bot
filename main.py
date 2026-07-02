@@ -205,7 +205,11 @@ BACK_TO_CHECKLISTS = InlineKeyboardMarkup(
 
 # Дневник животика.
 DIARY_KEYBOARD = InlineKeyboardMarkup(
-    [[InlineKeyboardButton("🖼 Моя лента", callback_data="diary:feed")]]
+    [
+        [InlineKeyboardButton("🖼 Моя лента", callback_data="diary:feed")],
+        [InlineKeyboardButton("⚖️ Записать вес", callback_data="diary:weight_add"),
+         InlineKeyboardButton("📉 Мой вес", callback_data="diary:weight_show")],
+    ]
 )
 
 
@@ -214,9 +218,35 @@ def diary_intro_text(total: int) -> str:
         "📖 *Дневник животика*\n\n"
         "Просто пришли мне фото 📸 — я сохраню его и подпишу текущей неделей. "
         "Если добавишь подпись к фото, она тоже сохранится.\n\n"
-        f"Сейчас в дневнике фото: *{total}*.\n"
-        "Посмотреть всё — кнопка ниже 👇"
+        f"Сейчас в дневнике фото: *{total}*.\n\n"
+        "⚖️ Ещё можно записывать вес — кнопки ниже 👇"
     )
+
+
+def _parse_weight(text: str) -> float | None:
+    """Разбирает вес: '68,5' или '68.5'. Разумный диапазон 30–250 кг."""
+    try:
+        value = float(text.strip().replace(",", "."))
+    except ValueError:
+        return None
+    return value if 30 <= value <= 250 else None
+
+
+def weight_history_text(rows) -> str:
+    """Список записей веса с приростом от первой записи."""
+    if not rows:
+        return "📉 *Вес*\n\nПока нет записей. Нажми «⚖️ Записать вес» и пришли число."
+    first = rows[0]["value"]
+    lines = ["📉 *Твой вес*\n"]
+    for r in rows:
+        wk = f"Неделя {r['week']}" if r["week"] is not None else "—"
+        delta = r["value"] - first
+        tail = f" (_{delta:+.1f} кг_)" if r is not rows[0] else ""
+        lines.append(f"{wk}: *{r['value']:.1f} кг*{tail}")
+    total = rows[-1]["value"] - first
+    if len(rows) > 1:
+        lines.append(f"\nВсего с первой записи: *{total:+.1f} кг*")
+    return "\n".join(lines)
 
 
 def moves_keyboard(count: int) -> InlineKeyboardMarkup:
@@ -308,6 +338,20 @@ async def whoami(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message.text
     uid = update.effective_user.id
+
+    # Если ждём ввод веса — пробуем разобрать число. Флаг снимаем в любом случае,
+    # чтобы кнопки меню не «застревали» в режиме ожидания.
+    if context.user_data.pop("awaiting_weight", False):
+        value = _parse_weight(msg)
+        if value is not None:
+            week = current_week()
+            db.add_weight(uid, week, value)
+            await update.message.reply_markdown(
+                f"⚖️ Записала: *{value:.1f} кг* (неделя {week}).",
+                reply_markup=DIARY_KEYBOARD,
+            )
+            return
+        # Не число (возможно, нажата кнопка меню) — молча идём дальше по меню.
 
     if msg == "🌅 Доброе утро" and is_admin(uid):
         await update.message.reply_text(random.choice(content.GREETINGS))
@@ -410,6 +454,18 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif data == "diary:feed":
         await send_diary_feed(context, query.message.chat_id, query.from_user.id)
+
+    elif data == "diary:weight_add":
+        context.user_data["awaiting_weight"] = True
+        await query.message.reply_text(
+            "⚖️ Пришли свой вес числом, например 68.5 (в кг)."
+        )
+
+    elif data == "diary:weight_show":
+        rows = db.get_weights(query.from_user.id)
+        await query.message.reply_markdown(
+            weight_history_text(rows), reply_markup=DIARY_KEYBOARD
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────

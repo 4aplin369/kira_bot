@@ -65,6 +65,16 @@ def init_db() -> None:
                 key        TEXT PRIMARY KEY,
                 created_at TEXT DEFAULT (datetime('now'))
             );
+
+            -- Записи веса (в дневнике). Привязка к user_id — у каждого свой.
+            CREATE TABLE IF NOT EXISTS weight (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id    INTEGER NOT NULL,
+                week       INTEGER,
+                value      REAL NOT NULL,      -- кг
+                created_at TEXT DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_weight_user ON weight(user_id);
             """
         )
     logging.info("База данных готова: %s", DB_PATH)
@@ -186,3 +196,25 @@ def mark_event_sent(key: str) -> None:
         conn.execute(
             "INSERT OR IGNORE INTO events_sent (key) VALUES (?)", (key,)
         )
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Вес (в дневнике)
+# ─────────────────────────────────────────────────────────────────────
+def add_weight(user_id: int, week: int | None, value: float) -> None:
+    """Сохраняет запись веса пользователя."""
+    with closing(_connect()) as conn, conn:
+        conn.execute(
+            "INSERT INTO weight (user_id, week, value) VALUES (?, ?, ?)",
+            (user_id, week, value),
+        )
+
+
+def get_weights(user_id: int) -> list[sqlite3.Row]:
+    """Все записи веса пользователя по порядку добавления."""
+    with closing(_connect()) as conn:
+        return conn.execute(
+            "SELECT week, value, created_at FROM weight WHERE user_id = ? "
+            "ORDER BY created_at, id",
+            (user_id,),
+        ).fetchall()
