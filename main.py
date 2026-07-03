@@ -18,10 +18,14 @@
 с памятью и коллажи.
 """
 
+import io
 import os
+import math
 import random
 import logging
 from datetime import date, time, timezone, timedelta
+
+from PIL import Image, ImageDraw, ImageFont
 
 from dotenv import load_dotenv
 
@@ -206,7 +210,8 @@ BACK_TO_CHECKLISTS = InlineKeyboardMarkup(
 # Дневник животика.
 DIARY_KEYBOARD = InlineKeyboardMarkup(
     [
-        [InlineKeyboardButton("🖼 Моя лента", callback_data="diary:feed")],
+        [InlineKeyboardButton("🖼 Моя лента", callback_data="diary:feed"),
+         InlineKeyboardButton("🎞 Собрать коллаж", callback_data="diary:collage")],
         [InlineKeyboardButton("⚖️ Записать вес", callback_data="diary:weight_add"),
          InlineKeyboardButton("📉 Мой вес", callback_data="diary:weight_show")],
     ]
@@ -467,6 +472,23 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             weight_history_text(rows), reply_markup=DIARY_KEYBOARD
         )
 
+    elif data == "diary:collage":
+        status = await query.message.reply_text("Собираю коллаж… 🎞 Пару секунд.")
+        collage = await build_progress_collage(context, query.from_user.id)
+        if collage is None:
+            await status.edit_text(
+                "Для коллажа нужно хотя бы 2 фото в разные недели. Пришли ещё! 💛"
+            )
+        else:
+            await context.bot.send_photo(
+                query.message.chat_id, collage,
+                caption="🎞 Твоя лента прогресса 💛",
+            )
+            try:
+                await status.delete()
+            except Exception:
+                pass
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Дневник: приём фото и показ ленты
@@ -511,6 +533,65 @@ async def send_diary_feed(context: ContextTypes.DEFAULT_TYPE, chat_id: int, uid:
             )
         else:
             await context.bot.send_media_group(chat_id, chunk)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Коллаж «лента прогресса» из фото животика (Pillow)
+# ─────────────────────────────────────────────────────────────────────
+FONT_PATH = os.path.join(os.path.dirname(__file__), "fonts", "DejaVuSans.ttf")
+
+
+def _fit_square(img: Image.Image, size: int) -> Image.Image:
+    """Обрезает по центру в квадрат и масштабирует до size×size."""
+    img = img.convert("RGB")
+    w, h = img.size
+    s = min(w, h)
+    left, top = (w - s) // 2, (h - s) // 2
+    return img.crop((left, top, left + s, top + s)).resize((size, size))
+
+
+def _compose_grid(items: list[tuple[str, Image.Image]], cols: int = 4,
+                  cell: int = 300, label_h: int = 40) -> bytes:
+    """Собирает сетку из (подпись, картинка). Возвращает JPEG-байты."""
+    n = len(items)
+    cols = min(cols, n)
+    rows = math.ceil(n / cols)
+    canvas = Image.new("RGB", (cols * cell, rows * cell), (255, 255, 255))
+    draw = ImageDraw.Draw(canvas, "RGBA")
+    font = ImageFont.truetype(FONT_PATH, 22)
+    for i, (label, img) in enumerate(items):
+        r, c = divmod(i, cols)
+        x, y = c * cell, r * cell
+        canvas.paste(_fit_square(img, cell), (x, y))
+        # Полупрозрачная плашка снизу + подпись по центру.
+        draw.rectangle([x, y + cell - label_h, x + cell, y + cell], fill=(0, 0, 0, 140))
+        tb = draw.textbbox((0, 0), label, font=font)
+        tw = tb[2] - tb[0]
+        draw.text((x + (cell - tw) // 2, y + cell - label_h + 8), label,
+                  font=font, fill=(255, 255, 255))
+    buf = io.BytesIO()
+    canvas.save(buf, format="JPEG", quality=88)
+    return buf.getvalue()
+
+
+async def build_progress_collage(context: ContextTypes.DEFAULT_TYPE, uid: int) -> bytes | None:
+    """Собирает коллаж из фото пользователя: по одному (последнему) фото на неделю."""
+    per_week: dict = {}
+    for r in db.get_photos(uid):
+        per_week[r["week"]] = r["photo_file_id"]  # порядок сохранён → остаётся последнее
+    items: list[tuple[str, Image.Image]] = []
+    for week in sorted(per_week, key=lambda w: (w is None, w)):
+        try:
+            f = await context.bot.get_file(per_week[week])
+            data = await f.download_as_bytearray()
+            img = Image.open(io.BytesIO(bytes(data)))
+            label = f"Неделя {week}" if week is not None else "—"
+            items.append((label, img))
+        except Exception as e:
+            logging.warning("Коллаж: не скачал фото %s: %s", per_week[week], e)
+    if len(items) < 2:
+        return None
+    return _compose_grid(items)
 
 
 async def morning_job(context: ContextTypes.DEFAULT_TYPE):
