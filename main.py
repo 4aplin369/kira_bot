@@ -477,7 +477,7 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         collage = await build_progress_collage(context, query.from_user.id)
         if collage is None:
             await status.edit_text(
-                "Для коллажа нужно хотя бы 2 фото в разные недели. Пришли ещё! 💛"
+                "Для коллажа нужно хотя бы 2 фото. Пришли ещё! 💛"
             )
         else:
             await context.bot.send_photo(
@@ -550,10 +550,13 @@ def _fit_square(img: Image.Image, size: int) -> Image.Image:
     return img.crop((left, top, left + s, top + s)).resize((size, size))
 
 
-def _compose_grid(items: list[tuple[str, Image.Image]], cols: int = 4,
+def _compose_grid(items: list[tuple[str, Image.Image]], cols: int | None = None,
                   cell: int = 300, label_h: int = 40) -> bytes:
     """Собирает сетку из (подпись, картинка). Возвращает JPEG-байты."""
     n = len(items)
+    # Почти квадратная сетка лучше использует место при 3, 5, 6 и т.п. фото.
+    if cols is None:
+        cols = min(4, math.ceil(math.sqrt(n)))
     cols = min(cols, n)
     rows = math.ceil(n / cols)
     canvas = Image.new("RGB", (cols * cell, rows * cell), (255, 255, 255))
@@ -575,20 +578,33 @@ def _compose_grid(items: list[tuple[str, Image.Image]], cols: int = 4,
 
 
 async def build_progress_collage(context: ContextTypes.DEFAULT_TYPE, uid: int) -> bytes | None:
-    """Собирает коллаж из фото пользователя: по одному (последнему) фото на неделю."""
-    per_week: dict = {}
-    for r in db.get_photos(uid):
-        per_week[r["week"]] = r["photo_file_id"]  # порядок сохранён → остаётся последнее
+    """Собирает коллаж из всех фото пользователя в порядке дневника."""
+    photos = db.get_photos(uid)
+    if len(photos) < 2:
+        return None
+
+    # Если в одной неделе несколько кадров, нумеруем их в подписи: 1/3, 2/3…
+    week_totals: dict[int | None, int] = {}
+    for row in photos:
+        week = row["week"]
+        week_totals[week] = week_totals.get(week, 0) + 1
+
+    week_seen: dict[int | None, int] = {}
     items: list[tuple[str, Image.Image]] = []
-    for week in sorted(per_week, key=lambda w: (w is None, w)):
+    for row in photos:
+        week = row["week"]
+        file_id = row["photo_file_id"]
+        week_seen[week] = week_seen.get(week, 0) + 1
         try:
-            f = await context.bot.get_file(per_week[week])
+            f = await context.bot.get_file(file_id)
             data = await f.download_as_bytearray()
             img = Image.open(io.BytesIO(bytes(data)))
             label = f"Неделя {week}" if week is not None else "—"
+            if week_totals[week] > 1:
+                label += f" · {week_seen[week]}/{week_totals[week]}"
             items.append((label, img))
         except Exception as e:
-            logging.warning("Коллаж: не скачал фото %s: %s", per_week[week], e)
+            logging.warning("Коллаж: не скачал фото %s: %s", file_id, e)
     if len(items) < 2:
         return None
     return _compose_grid(items)
@@ -685,10 +701,14 @@ async def check_milestones_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
 # ─────────────────────────────────────────────────────────────────────
 ANNOUNCE_DEFAULT = (
     "✨ *В боте появилось новенькое!*\n\n"
-    "Загляни в меню — теперь я умею больше:\n"
-    "🦶 *Шевеления* — считать толчки малыша, число запоминается.\n"
-    "📖 *Дневник* — присылай мне фото животика, я сохраню их по неделям, "
-    "а потом покажу всю ленту 💛"
+    "📸 *Коллаж прогресса* теперь собирается из всех фотографий — "
+    "даже если за одну неделю их несколько.\n\n"
+    "⚖️ *Дневник веса* — записывай вес и наблюдай, как он меняется "
+    "от недели к неделе.\n\n"
+    "💛 *Тёплые поздравления* — бот отметит важные этапы беременности, "
+    "а на финишной прямой будет каждую неделю поддерживать перед встречей "
+    "с малышом.\n\n"
+    "Загляни в дневник и попробуй новые возможности ✨"
 )
 
 
