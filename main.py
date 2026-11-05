@@ -91,6 +91,8 @@ FRIEND_NAME = os.environ.get("FRIEND_NAME", "Ксюша")
 PREGNANCY_DAYS = 280  # 40 недель
 
 # Автоматическое «Доброе утро».
+# Временно выключено; для возврата установите MORNING_ENABLED=true.
+MORNING_ENABLED = os.environ.get("MORNING_ENABLED", "false").strip().lower() in {"true", "1", "yes"}
 MORNING_TZ = timezone(timedelta(hours=3))   # Москва, UTC+3 (без перехода на лето)
 MORNING_TIME = time(9, 0, tzinfo=MORNING_TZ)
 # Вехи-поздравления проверяем чуть позже утреннего, чтобы не слиплись.
@@ -612,6 +614,8 @@ async def build_progress_collage(context: ContextTypes.DEFAULT_TYPE, uid: int) -
 
 async def morning_job(context: ContextTypes.DEFAULT_TYPE):
     """Ежедневная авто-отправка «Доброе утро» получателям из MORNING_RECIPIENTS."""
+    if not MORNING_ENABLED:
+        return
     for chat_id in MORNING_RECIPIENTS:
         try:
             greeting = random.choice(content.GREETINGS)
@@ -779,13 +783,15 @@ def main():
     app.add_error_handler(on_error)
 
     # Ежедневное «Доброе утро» в 9:00 по Москве.
-    app.job_queue.run_daily(morning_job, time=MORNING_TIME, name="morning")
+    if MORNING_ENABLED:
+        app.job_queue.run_daily(morning_job, time=MORNING_TIME, name="morning")
     # Проверка вех-поздравлений в 9:05.
     app.job_queue.run_daily(milestones_job, time=MILESTONE_TIME, name="milestones")
 
     logging.info(
-        "Бот запущен. Автоутро в %s для %s.",
-        MORNING_TIME.strftime("%H:%M %Z"), MORNING_RECIPIENTS,
+        "Бот запущен. Автоутро: %s. Время: %s.",
+        "включено" if MORNING_ENABLED else "выключено",
+        MORNING_TIME.strftime("%H:%M %Z"),
     )
     app.run_polling()
 
